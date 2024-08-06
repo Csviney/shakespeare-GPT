@@ -3,24 +3,25 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 # hyperparameters
-batch_size = 32 # how many independent sequences will we process in parallel?
-block_size = 8 # what is the maximum context length for predictions?
+batch_size = 32 # how many independent sequences to process in parallel
+block_size = 8 # the maximum context length for predictions
 max_iters = 3000
 eval_interval = 300
 learning_rate = 1e-2
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cpu'
 eval_iters = 200
 # ------------
 
 torch.manual_seed(1337)
 
-# wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
+# read in shakespeares works
 with open('input.txt', 'r', encoding='utf-8') as f:
     text = f.read()
 
-# here are all the unique characters that occur in this text
+# unique characters that occur in this text
 chars = sorted(list(set(text)))
 vocab_size = len(chars)
+
 # create a mapping from characters to integers
 stoi = { ch:i for i,ch in enumerate(chars) }
 itos = { i:ch for i,ch in enumerate(chars) }
@@ -29,7 +30,7 @@ decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integ
 
 # Train and test splits
 data = torch.tensor(encode(text), dtype=torch.long)
-n = int(0.9*len(data)) # first 90% will be train, rest val
+n = int(0.9*len(data)) # 90% training 10% validation
 train_data = data[:n]
 val_data = data[n:]
 
@@ -43,6 +44,7 @@ def get_batch(split):
     x, y = x.to(device), y.to(device)
     return x, y
 
+# to help with performance
 @torch.no_grad()
 def estimate_loss():
     out = {}
@@ -63,22 +65,24 @@ class BigramLanguageModel(nn.Module):
     def __init__(self, vocab_size):
         super().__init__()
         # each token directly reads off the logits for the next token from a lookup table
+        # each token has it's own row with a set of logits for each possible next token
         self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
 
     def forward(self, idx, targets=None):
 
         # idx and targets are both (B,T) tensor of integers
-        logits = self.token_embedding_table(idx) # (B,T,C)
+        # logits are essentially the score/probability of a given token being the next token in a sequence
+        logits = self.token_embedding_table(idx) # (B,T,C) = (Batch, Time, Channel) = (batch_size, block_size, vocab_size)
 
         if targets is None:
             loss = None
         else:
             B, T, C = logits.shape
-            logits = logits.view(B*T, C)
-            targets = targets.view(B*T)
-            loss = F.cross_entropy(logits, targets)
+            logits = logits.view(B*T, C) # making two dimensional for pytorch expectation of inputs
+            targets = targets.view(B*T) # making one dimensional for pytorch expectation of inputs
+            loss = F.cross_entropy(logits, targets) # -ln likelihood, how well do we predict target based on our logits
 
-        return logits, loss
+        return logits, loss # expect roughly 4.17 (-ln/65 where 65 = #params in our dataset)
 
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
