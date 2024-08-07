@@ -1,3 +1,5 @@
+# This simple model learns only on the character previous to it but will provide the base for future models
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -10,6 +12,7 @@ eval_interval = 300
 learning_rate = 1e-2
 device = 'cpu'
 eval_iters = 200
+n_embed = 32
 # ------------
 
 torch.manual_seed(1337)
@@ -44,8 +47,8 @@ def get_batch(split):
     x, y = x.to(device), y.to(device)
     return x, y
 
-# to help with performance
-@torch.no_grad()
+# to help estimate a more realistic loss
+@torch.no_grad() # Notifying pytorch that we aren't using backpropogation so that it doesn't store intermediate vars
 def estimate_loss():
     out = {}
     model.eval()
@@ -62,17 +65,23 @@ def estimate_loss():
 # super simple bigram model
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self, vocab_size):
+    def __init__(self):
         super().__init__()
         # each token directly reads off the logits for the next token from a lookup table
         # each token has it's own row with a set of logits for each possible next token
-        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
+        self.position_embedding_table = nn.Embedding(block_size, n_embed)
+        self.lm_head = nn.Linear(n_embed, vocab_size)
 
     def forward(self, idx, targets=None):
+        B, T = idx.shape
 
         # idx and targets are both (B,T) tensor of integers
-        # logits are essentially the score/probability of a given token being the next token in a sequence
-        logits = self.token_embedding_table(idx) # (B,T,C) = (Batch, Time, Channel) = (batch_size, block_size, vocab_size)
+        # a logit is essentially the score/probability (turned into prob through softmax) of a given token being the next token in a sequence
+        tok_emb = self.token_embedding_table(idx) # (B,T,C) = (Batch, Time, Channel) = (batch_size, block_size, n_emb)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
+        x = tok_emb + pos_emb # (B, T, C)
+        logits = self.lm_head(x) # (B,T,C) = (Batch, Time, Channel) = (batch_size, block_size, vocab_size)
 
         if targets is None:
             loss = None
@@ -87,8 +96,10 @@ class BigramLanguageModel(nn.Module):
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
+            # shrink idx to fit the last block_size tokens
+            idx_cond = idx[:, -block_size:]
             # get the predictions
-            logits, loss = self(idx)
+            logits, loss = self(idx_cond)
             # focus only on the last time step
             logits = logits[:, -1, :] # becomes (B, C)
             # apply softmax to get probabilities
@@ -99,10 +110,10 @@ class BigramLanguageModel(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
 
-model = BigramLanguageModel(vocab_size)
+model = BigramLanguageModel()
 m = model.to(device)
 
-# create a PyTorch optimizer
+# create a PyTorch optimizer, AdamW performs better than Stocastic Gradient Descent
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 for iter in range(max_iters):
@@ -115,12 +126,12 @@ for iter in range(max_iters):
     # sample a batch of data
     xb, yb = get_batch('train')
 
-    # evaluate the loss
+    # evaluate the loss, typical training loop
     logits, loss = model(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
 
 # generate from the model
-context = torch.zeros((1, 1), dtype=torch.long, device=device)
+context = torch.zeros((1, 1), dtype=torch.long, device=device) # Starting the generation from a new line character
 print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
