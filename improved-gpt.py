@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from datetime import datetime
+from torch.optim.lr_scheduler import CyclicLR
 
 # hyperparameters
 batch_size = 32 # how many independent sequences will we process in parallel?
@@ -218,12 +219,13 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 def lr_schedule(iter):
     if iter < max_iters * 0.5:
-        return lambda epoch: 1.05 ** epoch
+        return lambda epoch: 1.5 ** epoch
     else:
-        return lambda epoch: 0.95 ** epoch
+        return lambda epoch: 0.5 ** epoch
 
 # create a PyTorch scheduler
-scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_schedule(0)) 
+# scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_schedule(0)) 
+scheduler = CyclicLR(optimizer, base_lr=1e-4, max_lr=1e-2)
 
 for iter in range(max_iters):
     # sample a batch of data
@@ -235,11 +237,13 @@ for iter in range(max_iters):
     loss.backward()
     optimizer.step()
 
+    scheduler.step()
+
 
     # every once in a while evaluate the loss on train and val sets
     if iter % eval_interval == 0 or iter == max_iters - 1:
-        scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_schedule(iter))
-        scheduler.step()
+        # scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_schedule(iter))
+        # scheduler.step()
         losses = estimate_loss()
         print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
